@@ -1,5 +1,5 @@
-// src/App.tsx
-import { FormEvent, useMemo, useState } from "react";
+import { useMemo, useState } from "react";
+import type { FormEvent } from "react";
 import { Amplify } from "aws-amplify";
 import { generateClient } from "aws-amplify/data";
 import type { Schema } from "../amplify/data/resource";
@@ -15,11 +15,9 @@ import {
 import "@aws-amplify/ui-react/styles.css";
 import "./App.css";
 
-// Lukee AppSyncin ja Authin asetukset amplify_outputs.json:sta
 Amplify.configure(outputs);
 
 export default function App() {
-  // Luo clientin kerran (ei jokaisella renderillä)
   const amplifyClient = useMemo(
     () => generateClient<Schema>({ authMode: "userPool" }),
     []
@@ -37,36 +35,34 @@ export default function App() {
 
     try {
       const formData = new FormData(event.currentTarget);
-      const raw = formData.get("ingredients")?.toString() ?? "";
-
-      // Pilko, trimmaa ja suodata tyhjät
-      const ingredients = raw
+      const ingredients = (formData.get("ingredients")?.toString() ?? "")
         .split(",")
         .map((s) => s.trim())
         .filter(Boolean);
 
-      if (ingredients.length === 0) {
+      if (!ingredients.length) {
         setErrorMsg("Add at least one ingredient (comma-separated).");
         return;
       }
 
-      const { data, errors } = await amplifyClient.queries.askBedrock({
-        ingredients,
-      });
+      const resp = await amplifyClient.queries.askBedrock({ ingredients });
 
-      if (errors && errors.length) {
-        // GraphQL/AppSync-tason virhe
-        setErrorMsg(errors.map((e) => e.message).join("\n"));
+      // Debug ilman [0]-indeksointia
+      // console.log("askBedrock resp:", resp);
+
+      if (Array.isArray(resp?.errors) && resp.errors.length > 0) {
+        setErrorMsg(resp.errors.map((e) => e?.message ?? String(e)).join("\n"));
         return;
       }
 
-      // Handlerin oma virheviesti (bedrock.js palauttaa { body, error })
-      if (data?.error) {
-        setErrorMsg(data.error);
+      const body = resp?.data?.body ?? "";
+      const err = resp?.data?.error ?? "";
+
+      if (err) {
+        setErrorMsg(err);
         return;
       }
-
-      setResult(data?.body || "No data returned.");
+      setResult(body || "No data returned.");
     } catch (e: any) {
       setErrorMsg(e?.message ? String(e.message) : String(e));
     } finally {
