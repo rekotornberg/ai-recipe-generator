@@ -1,35 +1,141 @@
-import { useState } from 'react'
-import reactLogo from './assets/react.svg'
-import viteLogo from '/vite.svg'
-import './App.css'
+// src/App.tsx
+import { FormEvent, useMemo, useState } from "react";
+import { Amplify } from "aws-amplify";
+import { generateClient } from "aws-amplify/data";
+import type { Schema } from "../amplify/data/resource";
+import outputs from "../amplify_outputs.json";
 
-function App() {
-  const [count, setCount] = useState(0)
+import {
+  Authenticator,
+  Loader,
+  Placeholder,
+  Button,
+  View,
+} from "@aws-amplify/ui-react";
+import "@aws-amplify/ui-react/styles.css";
+import "./App.css";
+
+// Lukee AppSyncin ja Authin asetukset amplify_outputs.json:sta
+Amplify.configure(outputs);
+
+export default function App() {
+  // Luo clientin kerran (ei jokaisella renderillä)
+  const amplifyClient = useMemo(
+    () => generateClient<Schema>({ authMode: "userPool" }),
+    []
+  );
+
+  const [result, setResult] = useState<string>("");
+  const [errorMsg, setErrorMsg] = useState<string>("");
+  const [loading, setLoading] = useState(false);
+
+  const onSubmit = async (event: FormEvent<HTMLFormElement>) => {
+    event.preventDefault();
+    setLoading(true);
+    setErrorMsg("");
+    setResult("");
+
+    try {
+      const formData = new FormData(event.currentTarget);
+      const raw = formData.get("ingredients")?.toString() ?? "";
+
+      // Pilko, trimmaa ja suodata tyhjät
+      const ingredients = raw
+        .split(",")
+        .map((s) => s.trim())
+        .filter(Boolean);
+
+      if (ingredients.length === 0) {
+        setErrorMsg("Add at least one ingredient (comma-separated).");
+        return;
+      }
+
+      const { data, errors } = await amplifyClient.queries.askBedrock({
+        ingredients,
+      });
+
+      if (errors && errors.length) {
+        // GraphQL/AppSync-tason virhe
+        setErrorMsg(errors.map((e) => e.message).join("\n"));
+        return;
+      }
+
+      // Handlerin oma virheviesti (bedrock.js palauttaa { body, error })
+      if (data?.error) {
+        setErrorMsg(data.error);
+        return;
+      }
+
+      setResult(data?.body || "No data returned.");
+    } catch (e: any) {
+      setErrorMsg(e?.message ? String(e.message) : String(e));
+    } finally {
+      setLoading(false);
+    }
+  };
 
   return (
-    <>
-      <div>
-        <a href="https://vite.dev" target="_blank">
-          <img src={viteLogo} className="logo" alt="Vite logo" />
-        </a>
-        <a href="https://react.dev" target="_blank">
-          <img src={reactLogo} className="logo react" alt="React logo" />
-        </a>
-      </div>
-      <h1>Vite + React</h1>
-      <div className="card">
-        <button onClick={() => setCount((count) => count + 1)}>
-          count is {count}
-        </button>
-        <p>
-          Edit <code>src/App.tsx</code> and save to test HMR
-        </p>
-      </div>
-      <p className="read-the-docs">
-        Click on the Vite and React logos to learn more
-      </p>
-    </>
-  )
-}
+    <Authenticator>
+      {({ signOut, user }) => (
+        <div className="app-container">
+          <div className="header-container">
+            <h1 className="main-header">
+              Meet Your Personal
+              <br />
+              <span className="highlight">Recipe AI</span>
+            </h1>
+            <p className="description">
+              Type a few ingredients separated by commas (e.g.{" "}
+              <em>egg, milk, tomato</em>) and Recipe AI will generate a brand
+              new recipe on demand.
+            </p>
+            <View marginTop="0.5rem" fontSize="0.9rem" opacity={0.8}>
+              Signed in as <strong>{user?.username}</strong>{" "}
+              <Button size="small" onClick={signOut} variation="link">
+                Sign out
+              </Button>
+            </View>
+          </div>
 
-export default App
+          <form onSubmit={onSubmit} className="form-container">
+            <div className="search-container">
+              <input
+                type="text"
+                className="wide-input"
+                id="ingredients"
+                name="ingredients"
+                placeholder="Ingredient1, Ingredient2, Ingredient3,..."
+                autoComplete="off"
+                disabled={loading}
+              />
+              <button type="submit" className="search-button" disabled={loading}>
+                {loading ? "Generating..." : "Generate"}
+              </button>
+            </div>
+          </form>
+
+          <div className="result-container">
+            {loading ? (
+              <div className="loader-container">
+                <p>Loading...</p>
+                <Loader size="large" />
+                <Placeholder size="large" />
+                <Placeholder size="large" />
+                <Placeholder size="large" />
+              </div>
+            ) : (
+              <>
+                {errorMsg && <p className="error">{errorMsg}</p>}
+                {result && (
+                  <pre className="result" style={{ whiteSpace: "pre-wrap" }}>
+                    {result}
+                  </pre>
+                )}
+              </>
+            )}
+          </div>
+        </div>
+      )}
+    </Authenticator>
+  );
+}
